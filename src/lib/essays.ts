@@ -48,10 +48,34 @@ export async function buildFingerprint(
 async function fingerprintOf(
   summary: TmdbMovieSummary,
 ): Promise<{ fingerprint: FilmFingerprint | null; summary: TmdbMovieSummary }> {
+  const palette = await getPaletteForPoster(summary.poster_path);
   const details = await getMovieDetails(summary.id);
-  if (!details) return { fingerprint: null, summary };
-  const palette = await getPaletteForPoster(details.poster_path);
-  const fingerprint = await buildFingerprint(details, palette);
+  if (details) {
+    const fingerprint = await buildFingerprint(details, palette);
+    return { fingerprint, summary };
+  }
+  // Última instancia: huella con lo que el sumario ya sabe (géneros reales del
+  // índice, año, voto y paleta extraída del póster). Nunca deja un hueco.
+  const seed = await loadSeedBundle();
+  const genres = (summary.genre_ids ?? [])
+    .map((genreId) => seed.genres.find((genre) => genre.id === genreId))
+    .filter((genre): genre is NonNullable<typeof genre> => Boolean(genre));
+  const fingerprint: FilmFingerprint = {
+    id: summary.id,
+    title: summary.title ?? "",
+    year: toCatalogItem(summary).year,
+    overview: summary.overview ?? "",
+    tagline: null,
+    runtime: null,
+    rating: summary.vote_average ?? 0,
+    keywords: [],
+    genres,
+    palette,
+    family: palette?.dominantFamily ?? "neutro",
+    director: null,
+    cinematographer: null,
+    posterPath: summary.poster_path ?? null,
+  };
   return { fingerprint, summary };
 }
 

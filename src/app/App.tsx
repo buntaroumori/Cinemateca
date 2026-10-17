@@ -139,7 +139,7 @@ function Shell() {
 
       {route.name !== "not-found" ? <Footer /> : null}
 
-      <GrainOverlay enabled={settings.grainEffect && settings.heavyAnimations} />
+      <GrainOverlay enabled={settings.grainEffect} />
 
       <CommandPalette open={searchOpen} onClose={closeSearch} onOpenSettings={openSettings} />
       <SettingsModal open={settingsOpen} onClose={closeSettings} onNotify={notify} />

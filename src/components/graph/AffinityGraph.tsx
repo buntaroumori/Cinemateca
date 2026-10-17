@@ -118,7 +118,7 @@ export const AffinityGraph = memo(function AffinityGraph({
   const [cardPosition, setCardPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const { accent } = useTheme();
   const { settings, reducedMotion } = useSettings();
-  const physicsEnabled = settings.graphPhysics && settings.heavyAnimations && !reducedMotion;
+  const physicsEnabled = settings.graphPhysics && !reducedMotion;
 
   const nodes = useMemo(
     () => toGraphNodes(centerId, centerTitle, centerYear, centerPosterPath, soulmates, accent),
@@ -270,27 +270,6 @@ export const AffinityGraph = memo(function AffinityGraph({
     return () => window.clearInterval(timer);
   }, [hoveredId, physicsEnabled]);
 
-  const handlePointer = useCallback((event: ReactPointerEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    const body = hitTest(bodiesRef.current, x, y);
-    const next = body && !body.center ? body.node.id : null;
-    if (next !== hoveredRef.current) {
-      hoveredRef.current = next;
-      setHoveredId(next);
-      if (next !== null && body) setCardPosition({ x: body.x, y: body.y });
-      canvas.style.cursor = next !== null ? "pointer" : "default";
-    }
-  }, []);
-
-  const handleLeave = useCallback(() => {
-    hoveredRef.current = null;
-    setHoveredId(null);
-  }, []);
-
   const handleOpen = useCallback(
     (id: number) => {
       if (id === centerId) return;
@@ -298,6 +277,84 @@ export const AffinityGraph = memo(function AffinityGraph({
     },
     [centerId],
   );
+
+  const dragRef = useRef<{ id: number; moved: number; lastX: number; lastY: number } | null>(null);
+
+  const handlePointer = useCallback((event: ReactPointerEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+
+    const drag = dragRef.current;
+    if (drag) {
+      const body = bodiesRef.current.find((entry) => entry.node.id === drag.id);
+      if (body) {
+        const margin = body.radius + 4;
+        body.x = Math.min(Math.max(x, margin), rect.width - margin);
+        body.y = Math.min(Math.max(y, margin), rect.height - margin);
+        body.vx = 0;
+        body.vy = 0;
+        drag.moved += Math.hypot(x - drag.lastX, y - drag.lastY);
+        drag.lastX = x;
+        drag.lastY = y;
+        setCardPosition({ x: body.x, y: body.y });
+      }
+      return;
+    }
+
+    const body = hitTest(bodiesRef.current, x, y);
+    const next = body && !body.center ? body.node.id : null;
+    if (next !== hoveredRef.current) {
+      hoveredRef.current = next;
+      setHoveredId(next);
+      if (next !== null && body) setCardPosition({ x: body.x, y: body.y });
+      canvas.style.cursor = next !== null ? "grab" : "default";
+    }
+  }, []);
+
+  /** Mantener pulsado un nodo lo sujeta al puntero: el usuario lo mueve y la
+   *  simulación lo respeta (el resto de nodos reacciona a su nueva posición). */
+  const handleDown = useCallback((event: ReactPointerEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const body = hitTest(bodiesRef.current, x, y);
+    if (!body || body.center) return;
+    body.pinned = true;
+    dragRef.current = { id: body.node.id, moved: 0, lastX: x, lastY: y };
+    hoveredRef.current = body.node.id;
+    setHoveredId(body.node.id);
+    setCardPosition({ x: body.x, y: body.y });
+    canvas.style.cursor = "grabbing";
+    canvas.setPointerCapture(event.pointerId);
+  }, []);
+
+  const handleUp = useCallback((event: ReactPointerEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    const drag = dragRef.current;
+    if (!canvas || !drag) return;
+    const body = bodiesRef.current.find((entry) => entry.node.id === drag.id);
+    if (body) {
+      body.pinned = false;
+      // Suelta con un impulso mínimo: el nodo vuelve a flotar, no rebota.
+      body.vx = 0;
+      body.vy = 0;
+    }
+    dragRef.current = null;
+    canvas.style.cursor = "grab";
+    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+    if (drag.moved < 6) handleOpen(drag.id);
+  }, [handleOpen]);
+
+  const handleLeave = useCallback(() => {
+    if (dragRef.current) return;
+    hoveredRef.current = null;
+    setHoveredId(null);
+  }, []);
 
   const hoveredNode = hoveredId === null ? null : nodes.find((node) => node.id === hoveredId) ?? null;
 
@@ -314,7 +371,8 @@ export const AffinityGraph = memo(function AffinityGraph({
           </h2>
           <p className="mt-3 max-w-[62ch] font-serif text-[16px] italic leading-relaxed text-[#8b8b95]">
             Cada nodo flota con físicas propias. Pasa el cursor para trazar el rayo que lo une al centro y leer por qué
-            respira igual que <span className="not-italic text-[#d9d5cc]">{centerTitle}</span>.
+            respira igual que <span className="not-italic text-[#d9d5cc]">{centerTitle}</span>; mantén pulsado cualquier
+            nodo para moverlo con la mano.
           </p>
         </div>
         <p className="type-mono hidden text-[9px] uppercase tracking-[0.18em] text-[#7e7e88] lg:block">
@@ -330,8 +388,9 @@ export const AffinityGraph = memo(function AffinityGraph({
         <canvas
           ref={canvasRef}
           onPointerMove={handlePointer}
+          onPointerDown={handleDown}
+          onPointerUp={handleUp}
           onPointerLeave={handleLeave}
-          onClick={() => hoveredRef.current !== null && handleOpen(hoveredRef.current)}
           className="block h-full w-full touch-none"
           role="img"
           aria-label={`Grafo de afinidades de ${centerTitle} con ${Math.max(0, nodes.length - 1)} películas vinculadas`}

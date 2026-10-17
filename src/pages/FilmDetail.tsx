@@ -85,6 +85,8 @@ export function FilmDetail({ id, onNotify, onOpenSettings, onActiveFilm, onProgr
   /* ------------------------------ datos ------------------------------ */
   useEffect(() => {
     let cancelled = false;
+    // Toda ficha nueva se estrena desde el comienzo de la página.
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     setLoading(true);
     setError(null);
     setDetails(null);

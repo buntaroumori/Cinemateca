@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { LIMITS } from "@/lib/constants";
 import { MOOD_MAP } from "@/lib/moods";
 import { discoverMovies, getTrending, toCatalogItem, TmdbError } from "@/lib/tmdb";
@@ -144,7 +144,9 @@ export function useFilmFeed(initial: FeedFilters, hasCredentials: boolean): Film
             : seed.trending.length > 0
               ? seed.trending
               : seed.moods.flatMap((mood) => mood.items);
-          incoming = pool.map((movie) => toCatalogItem(movie));
+          // Las páginas de tendencias pueden solapar títulos: sin deduplicado
+          // nacen claves React repetidas y nodos huérfanos en la rejilla.
+          incoming = mergeUnique([], pool.map((movie) => toCatalogItem(movie)));
           nextTotalPages = 1;
         } else if (!active.mood && targetPage === 1 && !active.year && !active.decade) {
           const [trending, discover] = await Promise.all([
@@ -258,14 +260,13 @@ export function useFilmFeed(initial: FeedFilters, hasCredentials: boolean): Film
 
   const visible = filters.family ? items.filter((item) => item.family === filters.family) : items;
 
-  const familyCounts = useMemo(() => {
-    const counts: Partial<Record<ColorFamilyId, number>> = {};
-    for (const item of items) {
-      if (!item.family) continue;
-      counts[item.family] = (counts[item.family] ?? 0) + 1;
-    }
-    return counts;
-  }, [items]);
+  // Sin memoizar a propósito: el menú cromático y la rejilla deben derivar del
+  // mismo array en el mismo render (colecciones acotadas: coste despreciable).
+  const familyCounts: Partial<Record<ColorFamilyId, number>> = {};
+  for (const item of items) {
+    if (!item.family) continue;
+    familyCounts[item.family] = (familyCounts[item.family] ?? 0) + 1;
+  }
 
   return {
     items: visible,

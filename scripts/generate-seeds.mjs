@@ -10,6 +10,7 @@
  * clave se escribe en el artefacto ni se inyecta en el bundle del cliente.
  */
 import { mkdir, writeFile, rm } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { MOODS, SYSTEM_PROMPT } from "./moods.config.mjs";
@@ -18,6 +19,26 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
 const outDir = resolve(root, "public/seed");
 const outFile = resolve(outDir, "catalog.json");
+
+/**
+ * Carga un `.env` local (gitignored) si existe, sin sobrescribir variables ya
+ * presentes en el entorno (CI manda sobre el archivo local). Permite ejecutar
+ * `npm run seed` en desarrollo sin exportar credenciales a mano.
+ */
+function loadDotEnv() {
+  try {
+    const raw = readFileSync(resolve(root, ".env"), "utf8");
+    for (const line of raw.split("\n")) {
+      const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
+      if (!match || match[1].startsWith("#")) continue;
+      if (process.env[match[1]]) continue;
+      process.env[match[1]] = match[2].replace(/^["']|["']$/g, "");
+    }
+  } catch {
+    /* sin .env local: las credenciales llegan del entorno (CI) */
+  }
+}
+loadDotEnv();
 
 const env = process.env;
 const TMDB_KEY = (env.TMDB_API_KEY ?? env.VITE_TMDB_API_KEY ?? "").trim();
@@ -230,9 +251,14 @@ async function main() {
   log(`Géneros: ${genres.length}`);
 
   const trending = [];
+  const trendingSeen = new Set();
   for (let page = 1; page <= Math.min(PAGES, 2); page++) {
     const data = await tmdb("/trending/movie/week", { page, language: LANGUAGE });
-    trending.push(...(data?.results ?? []));
+    for (const item of data?.results ?? []) {
+      if (!item || trendingSeen.has(item.id)) continue;
+      trendingSeen.add(item.id);
+      trending.push(item);
+    }
     await sleep(260);
   }
   log(`Tendencias: ${trending.length}`);
@@ -248,7 +274,7 @@ async function main() {
         include_adult: false,
         sort_by: mood.sortBy,
         "vote_count.gte": mood.minVoteCount,
-        with_genres: mood.genreIds.join(","),
+        with_genres: mood.genreIds.join("|"),
         with_keywords: mood.keywordIds.join("|"),
         "vote_average.gte": mood.sortBy === "vote_average.desc" ? 6 : undefined,
       });
@@ -258,6 +284,24 @@ async function main() {
     }
     const unique = new Map();
     for (const item of items) if (item && item.poster_path) unique.set(item.id, item);
+    // Si la combinación géneros+keywords quedó raquilita, se rellena con el
+    // territorio genérico de la vibra (mismo orden y umbral de votos).
+    if (unique.size < 16) {
+      for (let page = 1; page <= PAGES; page++) {
+        const fallback = await tmdb("/discover/movie", {
+          language: LANGUAGE,
+          page,
+          include_adult: false,
+          sort_by: mood.sortBy,
+          "vote_count.gte": mood.minVoteCount,
+          with_genres: mood.genreIds.join("|"),
+          "vote_average.gte": mood.sortBy === "vote_average.desc" ? 6.5 : 6,
+        });
+        for (const item of fallback?.results ?? []) if (item && item.poster_path) unique.set(item.id, item);
+        await sleep(280);
+        if (!fallback || page >= (fallback.total_pages ?? 1) || unique.size >= 40) break;
+      }
+    }
     const list = [...unique.values()].slice(0, 40);
     list.forEach((item) => candidateIds.add(item.id));
     moods.push({ id: mood.id, generatedAt: new Date().toISOString(), items: list });
@@ -266,6 +310,10 @@ async function main() {
 
   trending.slice(0, 24).forEach((item) => item && candidateIds.add(item.id));
   FILM_IDS.forEach((id) => candidateIds.add(id));
+
+  const POOL_LIMIT = clampInt(env.SEED_POOL_LIMIT, 20, 400, 240);
+  const EXPAND_LIMIT = clampInt(env.SEED_EXPAND_LIMIT, 0, 300, 120);
+  log(`Colección objetivo: hasta ${POOL_LIMIT} títulos + ${EXPAND_LIMIT} ampliaciones`);
 
   const ordered = [...candidateIds]
     .map((id) => {
@@ -276,21 +324,30 @@ async function main() {
       return { id, score: (found?.vote_average ?? 0) * 10 + Math.min(found?.vote_count ?? 0, 20000) / 2000 };
     })
     .sort((a, b) => b.score - a.score)
-    .slice(0, FILM_COUNT)
+    .slice(0, POOL_LIMIT)
     .map((entry) => entry.id);
 
-  const films = {};
-  const essays = [];
-  const filmaffinity = {};
+  const filmsDir = resolve(outDir, "films");
+  await rm(filmsDir, { recursive: true, force: true });
+  await mkdir(filmsDir, { recursive: true });
 
-  for (const id of ordered) {
+  const filmStore = new Map();
+  const expandIds = new Set();
+  let writtenFiles = 0;
+
+  /**
+   * Descarga una ficha completa, la recorta y la publica como archivo estático
+   * independiente (`seed/films/<id>.json`): el navegador la servirá con
+   * `force-cache` + IndexedDB, sin credenciales y sin red viva.
+   */
+  async function enrich(id, { expand = true } = {}) {
     const details = await tmdb(`/movie/${id}`, {
       language: LANGUAGE,
       append_to_response: "credits,images,keywords,external_ids,recommendations,similar,videos",
       include_image_language: "en,null,es,fr,it,de,ja,ko,zh",
     });
-    await sleep(300);
-    if (!details) continue;
+    await sleep(240);
+    if (!details || !details.title) return null;
 
     if (details.images) {
       details.images.backdrops = (details.images.backdrops ?? []).slice(0, 12);
@@ -305,10 +362,35 @@ async function main() {
     if (details.recommendations) details.recommendations.results = (details.recommendations.results ?? []).slice(0, 20);
     if (details.videos) details.videos.results = (details.videos.results ?? []).slice(0, 8);
 
-    films[String(id)] = details;
-    log(`Ficha ${id} — ${details.title}`);
+    filmStore.set(id, details);
+    await writeFile(resolve(filmsDir, `${id}.json`), JSON.stringify(details), "utf8");
+    writtenFiles += 1;
 
-    if (!SKIP_FA) {
+    if (expand) {
+      const neighbours = [
+        ...(details.recommendations?.results ?? []).slice(0, 6),
+        ...(details.similar?.results ?? []).slice(0, 6),
+      ];
+      for (const item of neighbours) {
+        if (item?.id && !candidateIds.has(item.id) && !filmStore.has(item.id)) expandIds.add(item.id);
+      }
+    }
+    return details;
+  }
+
+  for (const id of ordered) {
+    const details = await enrich(id);
+    if (details) log(`Ficha ${id} — ${details.title}`);
+  }
+
+  const films = {};
+  const essays = [];
+  const filmaffinity = {};
+
+  if (!SKIP_FA) {
+    for (const id of ordered.slice(0, FILM_COUNT)) {
+      const details = filmStore.get(id);
+      if (!details) continue;
       const year = Number.parseInt((details.release_date ?? "").slice(0, 4), 10);
       const faId = await resolveFilmAffinity(details.original_title ?? details.title, Number.isFinite(year) ? year : null);
       await sleep(420);
@@ -319,10 +401,15 @@ async function main() {
     }
   }
 
+  for (const id of [...expandIds].slice(0, EXPAND_LIMIT)) {
+    const details = await enrich(id, { expand: false });
+    if (details) log(`Ficha ampliada ${id} — ${details.title}`);
+  }
+
   if (LLM_KEY && ESSAY_COUNT > 0) {
     log(`Generando hasta ${ESSAY_COUNT} ensayos con ${LLM_MODEL}`);
     let written = 0;
-    for (const film of Object.values(films)) {
+    for (const film of filmStore.values()) {
       if (written >= ESSAY_COUNT) break;
       const neighbours = [
         ...(film.recommendations?.results ?? []),
@@ -333,12 +420,9 @@ async function main() {
         if (written >= ESSAY_COUNT) break;
         if (seen.has(neighbour.id)) continue;
         seen.add(neighbour.id);
-        const target = films[String(neighbour.id)] ?? (await tmdb(`/movie/${neighbour.id}`, {
-          language: LANGUAGE,
-          append_to_response: "keywords,credits",
-        }));
+        const target =
+          filmStore.get(neighbour.id) ?? (await enrich(neighbour.id, { expand: false }));
         if (!target) continue;
-        await sleep(240);
         const draft = await callLlm(film, target);
         await sleep(240);
         if (!draft) continue;
@@ -368,6 +452,7 @@ async function main() {
     trending: trending.map(trimMovie).filter(Boolean).slice(0, 40),
     moods: moods.map((mood) => ({ ...mood, items: mood.items.map(trimMovie).filter(Boolean) })),
     films,
+    filmFiles: writtenFiles,
     essays,
     filmaffinity,
     genres,
@@ -377,7 +462,7 @@ async function main() {
   const json = JSON.stringify(bundle);
   await writeFile(outFile, `${json}\n`, "utf8");
   log(
-    `Bundle escrito: ${(json.length / 1024).toFixed(0)} KB · ${Object.keys(films).length} fichas · ${essays.length} ensayos · ${
+    `Bundle escrito: ${(json.length / 1024).toFixed(0)} KB · ${writtenFiles} fichas en seed/films · ${essays.length} ensayos · ${
       Object.keys(filmaffinity).length
     } FilmAffinity`,
   );

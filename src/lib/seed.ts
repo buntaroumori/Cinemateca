@@ -1,6 +1,6 @@
 import { IDB_STORES, STORAGE_KEYS, TTL_MS } from "./constants";
 import { cacheGet, cacheSet } from "./cache";
-import type { AppSettings, Essay, Palette, SeedBundle } from "./types";
+import type { AppSettings, Essay, Palette, SeedBundle, TmdbMovieDetails } from "./types";
 
 const EMPTY_BUNDLE: SeedBundle = {
   generatedAt: null,
@@ -54,6 +54,27 @@ export function loadSeedBundle(): Promise<SeedBundle> {
 
 export function resetSeedBundle(): void {
   bundlePromise = null;
+}
+
+/**
+ * Ficha estática por película (`seed/films/<id>.json`): permite abrir cualquier
+ * título de la colección precargada sin credenciales y sin red viva. Se sirve
+ * con `force-cache` y se replica en IndexedDB, así que la segunda visita cuesta
+ * 0 ms. Devuelve `null` si el título no forma parte de la colección.
+ */
+export async function loadSeedFilm(id: number): Promise<TmdbMovieDetails | null> {
+  const key = `seed-film:v1:${id}`;
+  const cached = await cacheGet<TmdbMovieDetails>(key);
+  if (cached) return cached;
+  try {
+    const response = await fetch(seedUrl(`films/${id}.json`), { cache: "force-cache" });
+    if (!response.ok) return null;
+    const details = (await response.json()) as TmdbMovieDetails;
+    await cacheSet(key, details, TTL_MS.details);
+    return details;
+  } catch {
+    return null;
+  }
 }
 
 /* -------------------------------------------------------------------------- */

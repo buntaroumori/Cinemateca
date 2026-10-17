@@ -74,8 +74,8 @@ function StaticCanvas({ enabled }: { enabled: boolean }) {
 }
 
 export const NotFound = memo(function NotFound() {
-  const { settings, reducedMotion } = useSettings();
-  const animated = settings.grainEffect && settings.heavyAnimations && !reducedMotion;
+  const { reducedMotion } = useSettings();
+  const animated = !reducedMotion;
 
   return (
     <div className="relative flex min-h-[100dvh] w-full items-center justify-center overflow-hidden bg-black px-5 py-24">

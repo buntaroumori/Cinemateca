@@ -4,6 +4,7 @@ import { compression } from "vite-plugin-compression2";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { pickHeroRawItem, type HeroCandidate } from "./src/lib/hero";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -87,9 +88,50 @@ function spaFallbackForGitHubPages(): Plugin {
         "})();</script>",
       ].join("");
       const tagged = script.replace("<script>", `<script data-base="${base}">`);
-      const patched = indexHtml.replace(marker, `${marker}\n${tagged}`);
+      // La página 404 no muestra el hero: fuera el preload de su imagen y el
+      // JSON inline del destacado.
+      const withoutHero = indexHtml
+        .replace(/\s*<link rel="preload" as="image"[^>]*\/>/, "")
+        .replace(/\s*<script type="application\/json" id="cinemateca-hero">[\s\S]*?<\/script>/, "");
+      const patched = withoutHero.replace(marker, `${marker}\n${tagged}`);
       await mkdir(outDir, { recursive: true });
       await writeFile(resolve(outDir, "404.html"), patched, "utf8");
+    },
+  };
+}
+
+/**
+ * La imagen del hero destacado es el LCP de la portada. Su URL es determinista
+ * (primer film por orden «esencia» de la semilla, calidad «Alta» → w1280), así
+ * que el build inyecta en el HTML: (1) un `<link rel="preload">` de la imagen,
+ * que se descarga en paralelo al JS, y (2) el item TMDB en crudo del hero como
+ * JSON (<1 KB), que FeaturedSpotlight renderiza en el primer commit de React
+ * sin esperar al catálogo completo. Resultado: LCP mínimo y CLS 0.
+ */
+function preloadHeroImage(): Plugin {
+  return {
+    name: "cinemateca:preload-hero",
+    apply: "build",
+    async transformIndexHtml(html) {
+      try {
+        const raw = await readFile(resolve(here, "public/seed/catalog.json"), "utf8");
+        const catalog = JSON.parse(raw) as { trending?: HeroCandidate[] };
+        const hero = pickHeroRawItem(catalog.trending ?? []);
+        const path = hero ? hero.backdrop_path ?? hero.poster_path : null;
+        if (!hero || !path) return html;
+        const url = `https://image.tmdb.org/t/p/w1280${path}`;
+        const json = JSON.stringify(hero).replace(/</g, "\\u003c");
+        return html.replace(
+          "</head>",
+          [
+            `    <link rel="preload" as="image" href="${url}" fetchpriority="high" />`,
+            `    <script type="application/json" id="cinemateca-hero">${json}</script>`,
+            "  </head>",
+          ].join("\n"),
+        );
+      } catch {
+        return html;
+      }
     },
   };
 }
@@ -103,6 +145,7 @@ export default defineConfig({
   },
   plugins: [
     react(),
+    preloadHeroImage(),
     compression({
       algorithms: ["brotliCompress", "gzip"],
       include: /\.(js|mjs|cjs|css|html|svg|json)$/i,

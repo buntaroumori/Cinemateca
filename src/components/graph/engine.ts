@@ -19,6 +19,8 @@ export interface Body {
   orbit: number;
   radius: number;
   center: boolean;
+  /** Nodo sujeto por el puntero del usuario: la simulación lo respeta. */
+  pinned: boolean;
 }
 
 export interface GraphGeometry {
@@ -61,6 +63,7 @@ export function createBodies(nodes: GraphNode[], geometry: GraphGeometry): Body[
         orbit: 0,
         radius: geometry.centerRadius,
         center: true,
+        pinned: false,
       });
       return;
     }
@@ -74,10 +77,11 @@ export function createBodies(nodes: GraphNode[], geometry: GraphGeometry): Body[
       vx: 0,
       vy: 0,
       angle,
-      angularSpeed: (random() - 0.5) * 0.0016 + (node.affinity > 0.7 ? 0.0006 : -0.0004),
+      angularSpeed: (random() - 0.5) * 0.00032 + (node.affinity > 0.7 ? 0.00012 : -0.00008),
       orbit,
       radius: Math.max(14, Math.min(32, 13 + node.affinity * 20)),
       center: false,
+      pinned: false,
     });
   });
 
@@ -103,20 +107,20 @@ export function stepBodies({ geometry, bodies, hovered, time, dt, physics }: Ste
       continue;
     }
 
-    if (physics) body.angle += body.angularSpeed * scale * 16;
+    if (physics && !body.pinned) body.angle += body.angularSpeed * scale * 3.2;
 
     const targetX = geometry.cx + Math.cos(body.angle) * body.orbit;
     const targetY = geometry.cy + Math.sin(body.angle) * body.orbit * 0.78;
-    const k = hovered === body.node.id ? 0.075 : 0.038;
+    const k = hovered === body.node.id ? 0.05 : 0.022;
     body.vx += (targetX - body.x) * k * scale;
     body.vy += (targetY - body.y) * k * scale;
 
-    body.vx += (geometry.cx - body.x) * 0.0016 * scale;
-    body.vy += (geometry.cy - body.y) * 0.0016 * scale;
+    body.vx += (geometry.cx - body.x) * 0.0009 * scale;
+    body.vy += (geometry.cy - body.y) * 0.0009 * scale;
 
     if (physics) {
-      const wobbleX = Math.sin(time / 900 + body.node.id) * 0.045;
-      const wobbleY = Math.cos(time / 1100 + body.node.id * 1.7) * 0.045;
+      const wobbleX = Math.sin(time / 1700 + body.node.id) * 0.018;
+      const wobbleY = Math.cos(time / 2100 + body.node.id * 1.7) * 0.018;
       body.vx += wobbleX * scale;
       body.vy += wobbleY * scale;
     }
@@ -132,29 +136,35 @@ export function stepBodies({ geometry, bodies, hovered, time, dt, physics }: Ste
       const minDistance = a.radius + b.radius + 20;
       if (distanceSq > minDistance * minDistance || distanceSq === 0) continue;
       const distance = Math.sqrt(distanceSq);
-      const force = ((minDistance - distance) / distance) * 0.42 * scale;
+      const force = ((minDistance - distance) / distance) * 0.3 * scale;
       const fx = dx * force;
       const fy = dy * force;
-      if (!a.center) {
+      if (!a.center && !a.pinned) {
         a.vx -= fx;
         a.vy -= fy;
       }
-      if (!b.center) {
+      if (!b.center && !b.pinned) {
         b.vx += fx;
         b.vy += fy;
       }
     }
   }
 
-  const damping = physics ? 0.855 : 0.4;
+  const damping = physics ? 0.86 : 0.4;
   for (const body of bodies) {
     if (body.center) continue;
+    if (body.pinned) {
+      body.vx = 0;
+      body.vy = 0;
+      continue;
+    }
     body.vx *= damping;
     body.vy *= damping;
     const speed = Math.hypot(body.vx, body.vy);
-    if (speed > 9) {
-      body.vx = (body.vx / speed) * 9;
-      body.vy = (body.vy / speed) * 9;
+    const maxSpeed = 2.4;
+    if (speed > maxSpeed) {
+      body.vx = (body.vx / speed) * maxSpeed;
+      body.vy = (body.vy / speed) * maxSpeed;
     }
     body.x += body.vx * scale;
     body.y += body.vy * scale;

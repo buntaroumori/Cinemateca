@@ -347,7 +347,7 @@ export function SettingsModal({ open, onClose, onNotify }: SettingsModalProps) {
                 checked={settings.heavyAnimations}
                 onChange={(value) => patch({ heavyAnimations: value })}
                 label="Animaciones pesadas"
-                description="FLIP elástico, físicas del grafo y transiciones de héroe. Se desactiva solo con prefers-reduced-motion"
+                description="FLIP elástico, rotación de portada y transiciones de héroe. Se desactiva solo con prefers-reduced-motion"
               />
             </div>
             <div className="grid gap-4 sm:grid-cols-2">

@@ -57,11 +57,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const root = document.documentElement;
-    const motionOff = reducedMotion || !settings.heavyAnimations;
-    root.dataset.motion = motionOff ? "reduced" : "full";
-    root.dataset.grain = settings.grainEffect && !motionOff ? "on" : "off";
+    root.dataset.motion = reducedMotion ? "reduced" : "full";
+    root.dataset.grain = settings.grainEffect && !reducedMotion ? "on" : "off";
     root.dataset.quality = settings.imageQuality;
-  }, [settings.heavyAnimations, settings.grainEffect, settings.imageQuality, reducedMotion]);
+  }, [settings.grainEffect, settings.imageQuality, reducedMotion]);
 
   const update = useCallback((patch: Partial<AppSettings>) => {
     setSettings((previous) => {

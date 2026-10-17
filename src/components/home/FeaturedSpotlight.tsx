@@ -1,7 +1,8 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { cx, formatScore, truncate } from "@/lib/format";
 import { withAlpha } from "@/lib/colors";
 import { imageSources } from "@/lib/images";
+import { toCatalogItem } from "@/lib/tmdb";
 import { useSettings } from "@/app/settings";
 import type { CatalogItem } from "@/lib/types";
 import { IconArrowRight, IconPlay } from "../ui/Icons";
@@ -14,12 +15,33 @@ export interface FeaturedSpotlightProps {
 const ROTATION_MS = 9000;
 
 /**
+ * Hero inyectado como JSON en el HTML durante el build (item TMDB en crudo del
+ * primer film por «esencia»). Permite pintar la portada real en el primer
+ * commit de React, sin esperar al catálogo: LCP mínimo y cero desplazamientos.
+ */
+function readInlineHero(): CatalogItem | null {
+  if (typeof document === "undefined") return null;
+  try {
+    const node = document.getElementById("cinemateca-hero");
+    const text = node?.textContent?.trim();
+    if (!text) return null;
+    return toCatalogItem(JSON.parse(text));
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Portada editorial rotatoria: fondo a sangre con degradado, glow derivado de
  * la paleta extraída del póster y tipografía serif de gran cuerpo.
  */
 export const FeaturedSpotlight = memo(function FeaturedSpotlight({ items, onOpen }: FeaturedSpotlightProps) {
   const { settings, reducedMotion } = useSettings();
-  const pool = items.slice(0, 6);
+  const inlineHero = useMemo(() => readInlineHero(), []);
+  // Mientras el feed no llega, el hero inline sostiene la portada; en cuanto
+  // hay items, el primero por «esencia» es exactamente el mismo film.
+  const effective = items.length > 0 ? items : inlineHero ? [inlineHero] : [];
+  const pool = effective.slice(0, 6);
   const [index, setIndex] = useState(0);
   const [visible, setVisible] = useState(true);
 
@@ -40,7 +62,38 @@ export const FeaturedSpotlight = memo(function FeaturedSpotlight({ items, onOpen
   }, [pool.length, reducedMotion, settings.heavyAnimations]);
 
   const film = pool[index];
-  if (!film) return null;
+  if (!film) {
+    /* Esqueleto con la geometría exacta del hero real (-mt y alto clamp idénticos):
+       reserva el espacio para que la llegada de los datos no desplace la página (CLS 0). */
+    return (
+      <section
+        className="relative -mt-[62px] w-full overflow-hidden sm:-mt-[70px]"
+        aria-label="Película destacada"
+        aria-busy="true"
+      >
+        <div className="relative h-[clamp(440px,72vh,760px)] w-full">
+          <div className="shimmer absolute inset-0 overflow-hidden bg-[#0a0a0c]" aria-hidden="true" />
+          <div
+            className="absolute inset-0"
+            style={{
+              background:
+                "linear-gradient(180deg, rgba(0,0,0,0.86) 0%, rgba(0,0,0,0.42) 34%, rgba(0,0,0,0.92) 82%, #000000 100%)",
+            }}
+            aria-hidden="true"
+          />
+          <div className="relative z-10 mx-auto flex h-full w-full max-w-[1680px] flex-col justify-end px-5 pb-12 sm:px-8 lg:px-12 lg:pb-16">
+            <div className="max-w-[720px]">
+              <span className="shimmer block h-[9px] w-[190px] overflow-hidden rounded-[2px] bg-[#101013]" />
+              <span className="shimmer mt-4 block h-[clamp(34px,6.4vw,74px)] w-3/4 overflow-hidden rounded-[2px] bg-[#101013]" />
+              <span className="shimmer mt-6 block h-[13px] w-full max-w-[60ch] overflow-hidden rounded-[2px] bg-[#101013]" />
+              <span className="shimmer mt-2 block h-[13px] w-2/3 max-w-[42ch] overflow-hidden rounded-[2px] bg-[#101013]" />
+              <span className="shimmer mt-8 block h-[42px] w-[230px] overflow-hidden rounded-[999px] bg-[#101013]" />
+            </div>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   const backdrop = imageSources({
     path: film.backdropPath ?? film.posterPath,

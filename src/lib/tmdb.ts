@@ -2,7 +2,7 @@ import { cacheGet, cacheSet, dedupe } from "./cache";
 import { LIMITS, STORAGE_KEYS, TTL_MS, TMDB_API_BASE } from "./constants";
 import { normalize } from "./fuzzy";
 import { runPool } from "./pool";
-import { loadSeedBundle } from "./seed";
+import { loadSeedBundle, loadSeedFilm } from "./seed";
 import type {
   CatalogItem,
   MoodDefinition,
@@ -222,6 +222,8 @@ export async function getMovieDetails(id: number, language?: string): Promise<Tm
   const seed = await loadSeedBundle();
   const seeded = seed.films[String(id)];
   if (seeded) return seeded;
+  const fromSeedFile = await loadSeedFilm(id);
+  if (fromSeedFile) return fromSeedFile;
   if (!hasCredentials()) return null;
   try {
     return await request<TmdbMovieDetails>(
