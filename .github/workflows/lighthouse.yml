@@ -1,0 +1,70 @@
+name: Lighthouse audit
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: lighthouse-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Build + Lighthouse 100/100
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Build
+        env:
+          VITE_BASE_PATH: /
+        run: npm run build
+
+      - name: Serve production bundle
+        run: |
+          nohup npx --yes serve dist -l 4173 -s > serve.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:4173/ > /dev/null; then
+              echo "Servidor de preview listo"; exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::El servidor de preview no arrancó"; cat serve.log; exit 1
+
+      - name: Run Lighthouse
+        uses: treosh/lighthouse-ci-action@v12
+        with:
+          urls: |
+            http://127.0.0.1:4173/
+          budgetPath: ./lighthouse-budget.json
+          uploadArtifacts: true
+          temporaryPublicStorage: false
+
+      - name: Enforce 100/100
+        run: |
+          set -euo pipefail
+          node scripts/assert-lighthouse.mjs .lighthouseci || node scripts/assert-lighthouse.mjs
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-reports
+          path: |
+            .lighthouseci
+            lighthouse-results
+          if-no-files-found: ignore

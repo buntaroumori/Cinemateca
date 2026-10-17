@@ -1,0 +1,124 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      skip_seeds:
+        description: "Compilar sin regenerar semillas TMDB/LLM"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  build:
+    name: Install · Typecheck · Seed · Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Configure GitHub Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Install dependencies (immutable)
+        run: npm ci --no-audit --no-fund
+
+      - name: Generate static seeds (TMDB catalogues + LLM essays)
+        if: ${{ github.event.inputs.skip_seeds != 'true' }}
+        env:
+          # Secretos: viven únicamente en el runner y en el proceso Node del
+          # script. Nunca se inyectan en el bundle del cliente (no llevan el
+          # prefijo VITE_), por lo que no pueden filtrarse al navegador.
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          TMDB_READ_TOKEN: ${{ secrets.TMDB_READ_TOKEN }}
+          TMDB_LANGUAGE: ${{ vars.TMDB_LANGUAGE || 'es-ES' }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
+          LLM_MODEL: ${{ vars.LLM_MODEL || 'gpt-4o-mini' }}
+          LLM_LANGUAGE: ${{ vars.LLM_LANGUAGE || 'es' }}
+          SEED_PAGE_COUNT: ${{ vars.SEED_PAGE_COUNT || '2' }}
+          SEED_ESSAY_COUNT: ${{ vars.SEED_ESSAY_COUNT || '24' }}
+        run: node scripts/generate-seeds.mjs
+
+      - name: Build (typecheck + Vite production bundle + 404 SPA fallback)
+        env:
+          # Único dato de configuración pública: la ruta base del sitio.
+          VITE_BASE_PATH: ${{ vars.BASE_PATH || steps.pages.outputs.base_path || '/' }}
+          VITE_APP_VERSION: ${{ github.sha }}
+          VITE_BUILD_STAMP: ${{ github.run_id }}
+        run: npm run build
+
+      - name: Verify bundle does not leak secrets
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          TMDB_READ_TOKEN: ${{ secrets.TMDB_READ_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+        run: |
+          set -euo pipefail
+          node scripts/audit-secrets.mjs dist
+          echo "Auditoría de secretos: OK"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+          retention-days: 7
+
+  deploy:
+    name: Deploy to production
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Smoke test (HTTP 200 + HTML válido)
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            code=$(curl -s -o /tmp/page.html -w "%{http_code}" -L "$PAGE_URL" || true)
+            if [ "$code" = "200" ] && grep -q "Cinemateca" /tmp/page.html; then
+              echo "Producción operativa: $PAGE_URL (HTTP $code)"
+              exit 0
+            fi
+            echo "Intento $attempt: HTTP $code — reintentando en 20s"
+            sleep 20
+          done
+          echo "::error::El despliegue no respondió 200 tras 5 intentos"
+          exit 1
