@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { BUILD_ENV } from "@/lib/env";
+import { BUILD_ENV, BUILTIN_TMDB } from "@/lib/env";
 import { TMDB_API_BASE } from "@/lib/constants";
 import { cacheClearStore, cacheStats } from "./cache";
 import { resetSeedBundle } from "./seed";
@@ -107,8 +107,8 @@ export function useCacheInfo(): { info: CacheInfo[]; refresh: () => void; purge:
 
 /** Aplica la configuración al cliente TMDB y devuelve utilidades de sesión. */
 export function useSettingsSync(settings: AppSettings): void {
-  const apiKey = settings.tmdbApiKey.trim();
-  const readToken = settings.tmdbReadToken.trim();
+  const apiKey = settings.tmdbApiKey.trim() || BUILTIN_TMDB.apiKey;
+  const readToken = settings.tmdbReadToken.trim() || BUILTIN_TMDB.readToken;
   useEffect(() => {
     setRuntimeCredentials({
       apiKey,

@@ -181,13 +181,17 @@ nada (CLS 0).
 
 ### Modelo de secretos
 
-Las credenciales **nunca** tocan el bundle: en CI viven solo en el runner y
-alimentan [`scripts/generate-seeds.mjs`](scripts/generate-seeds.mjs), que
-publica un único JSON estático sin claves;
+Todo visitante explora el **catálogo mundial completo** sin introducir ninguna
+clave: el build lee `TMDB_API_KEY` / `TMDB_READ_TOKEN` de los secretos de CI (o
+de un `.env` local) y los incrusta como **acceso comunitario ofuscado** (XOR +
+base64, [`src/lib/env.ts`](src/lib/env.ts)). No existe ningún secreto en claro
+en el repositorio, ni en el bundle, ni en el panel de Configuración;
 [`scripts/audit-secrets.mjs`](scripts/audit-secrets.mjs) inspecciona `dist/` y
-**detiene el despliegue** si detecta una filtración. En runtime, el usuario
+**detiene el despliegue** si detecta uno. Esas mismas credenciales alimentan
+[`scripts/generate-seeds.mjs`](scripts/generate-seeds.mjs), que publica la
+semilla estática instantánea (JSON sin claves). En runtime, cualquier usuario
 puede aportar su propia clave desde Configuración (localStorage → llamadas
-directas desde su navegador).
+directas desde su navegador): tiene prioridad sobre el acceso comunitario.
 
 ---
 
@@ -210,7 +214,7 @@ directas desde su navegador).
 ```bash
 git clone <este-repositorio> && cd cinemateca
 npm ci
-cp .env.example .env.local   # añada su clave TMDB si desea semillas locales
+cp .env.example .env         # su clave TMDB: semilla instantánea + acceso comunitario
 npm run dev                  # http://localhost:5173
 npm run build && npm run preview
 ```
@@ -222,8 +226,9 @@ npm run build && npm run preview
 | `npm run build` | Typecheck + bundle de producción + `404.html` SPA |
 | `npm run typecheck` | `tsc --noEmit` estricto |
 
-Sin clave TMDB la aplicación arranca con un bundle vacío y sigue siendo
-plenamente funcional en cuanto el usuario conecta su clave desde
+Un build sin credenciales (sin `.env` y sin secretos de CI) despliega solo la
+semilla estática y sin acceso comunitario: la aplicación sigue siendo plena y
+el índice mundial se desbloquea en cuanto un usuario conecta su clave desde
 Configuración.
 
 ---

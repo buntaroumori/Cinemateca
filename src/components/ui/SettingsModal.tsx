@@ -232,7 +232,7 @@ export function SettingsModal({ open, onClose, onNotify }: SettingsModalProps) {
           <Section
             icon={<IconKey size={15} />}
             title="Credenciales TMDB"
-            hint="La clave vive únicamente en tu navegador (localStorage) y viaja directa a api.themoviedb.org. El bundle compilado no contiene ningún secreto."
+            hint="Este despliegue ya incluye acceso comunitario al catálogo mundial: con los campos vacíos, todo visitante explora sin límites. Una clave propia vive únicamente en tu navegador (localStorage), viaja directa a api.themoviedb.org y tiene prioridad sobre la comunitaria."
           >
             <div className="grid gap-5 lg:grid-cols-2">
               <TextField
@@ -241,7 +241,7 @@ export function SettingsModal({ open, onClose, onNotify }: SettingsModalProps) {
                 onChange={(value) => patch({ tmdbApiKey: value })}
                 placeholder="p. ej. 8f2c…"
                 type="password"
-                hint="themoviedb.org → Settings → API"
+                hint="Vacío = acceso comunitario incluido · themoviedb.org → Settings → API"
               />
               <TextField
                 label="Read Access Token (v4, opcional)"

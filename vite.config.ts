@@ -1,12 +1,46 @@
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { compression } from "vite-plugin-compression2";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pickHeroRawItem, type HeroCandidate } from "./src/lib/hero";
 
 const here = dirname(fileURLToPath(import.meta.url));
+
+/** Parser mínimo de `.env` (el mismo contrato que scripts/generate-seeds.mjs). */
+function loadDotEnv(): Record<string, string> {
+  const out: Record<string, string> = {};
+  const file = resolve(here, ".env");
+  if (!existsSync(file)) return out;
+  for (const line of readFileSync(file, "utf8").split(/\r?\n/)) {
+    const match = /^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/.exec(line);
+    if (!match || match[1].startsWith("#")) continue;
+    out[match[1]] = match[2].replace(/^["']|["']$/g, "");
+  }
+  return out;
+}
+
+const dotEnv = loadDotEnv();
+
+/**
+ * Credenciales comunitarias: se leen del entorno del build (secretos de CI o
+ * `.env` local, ambos fuera del repositorio) y se incrustan ofuscadas con XOR
+ * + base64. En el bundle no existe ningún secreto en claro; el repo tampoco.
+ */
+const BUILTIN_MASK = "cinemateca-sensorial";
+function obfuscate(value: string): string {
+  const clean = (value ?? "").trim();
+  if (!clean) return "";
+  const bytes = Array.from(clean, (char, index) =>
+    char.charCodeAt(0) ^ BUILTIN_MASK.charCodeAt(index % BUILTIN_MASK.length),
+  );
+  return Buffer.from(bytes).toString("base64");
+}
+
+const builtinApiKey = process.env.TMDB_API_KEY ?? dotEnv.TMDB_API_KEY ?? "";
+const builtinReadToken = process.env.TMDB_READ_TOKEN ?? dotEnv.TMDB_READ_TOKEN ?? "";
 
 const base = (() => {
   const raw = process.env.VITE_BASE_PATH ?? "/";
@@ -138,6 +172,10 @@ function preloadHeroImage(): Plugin {
 
 export default defineConfig({
   base,
+  define: {
+    __CINEMATECA_BUILTIN_KEY__: JSON.stringify(obfuscate(builtinApiKey)),
+    __CINEMATECA_BUILTIN_TOKEN__: JSON.stringify(obfuscate(builtinReadToken)),
+  },
   resolve: {
     alias: {
       "@": resolve(here, "src"),

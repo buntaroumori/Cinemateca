@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { BUILD_ENV, DEFAULT_SETTINGS, prefersReducedMotion } from "@/lib/env";
+import { BUILD_ENV, BUILTIN_TMDB, DEFAULT_SETTINGS, prefersReducedMotion } from "@/lib/env";
 import { readLocalSettings, writeLocalSettings } from "@/lib/seed";
 import { setRuntimeCredentials } from "@/lib/tmdb";
 import { setImageBase } from "@/lib/images";
@@ -19,8 +19,6 @@ const SettingsContext = createContext<SettingsContextValue | null>(null);
 function mergeSettings(): AppSettings {
   const stored = readLocalSettings();
   const merged: AppSettings = { ...DEFAULT_SETTINGS, ...(stored ?? {}) };
-  if (!merged.tmdbApiKey && BUILD_ENV.buildTimeApiKey) merged.tmdbApiKey = BUILD_ENV.buildTimeApiKey;
-  if (!merged.tmdbReadToken && BUILD_ENV.buildTimeReadToken) merged.tmdbReadToken = BUILD_ENV.buildTimeReadToken;
   if (!merged.corsProxyUrl && BUILD_ENV.buildTimeCorsProxy) merged.corsProxyUrl = BUILD_ENV.buildTimeCorsProxy;
   if (!merged.tmdbImageBase && BUILD_ENV.buildTimeImageBase) merged.tmdbImageBase = BUILD_ENV.buildTimeImageBase;
   if (!merged.llmProvider && BUILD_ENV.buildTimeLlmProvider) merged.llmProvider = BUILD_ENV.buildTimeLlmProvider;
@@ -48,8 +46,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     setRuntimeCredentials({
-      apiKey: settings.tmdbApiKey.trim(),
-      readToken: settings.tmdbReadToken.trim(),
+      // La clave personal (localStorage) manda; si no existe, se usa el
+      // acceso comunitario ofuscado incluido en el build.
+      apiKey: settings.tmdbApiKey.trim() || BUILTIN_TMDB.apiKey,
+      readToken: settings.tmdbReadToken.trim() || BUILTIN_TMDB.readToken,
       language: settings.language,
       corsProxy: settings.corsProxyUrl.trim(),
     });
@@ -81,7 +81,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       settings,
       update,
       reset,
-      hasTmdbCredentials: Boolean(settings.tmdbApiKey.trim() || settings.tmdbReadToken.trim()),
+      hasTmdbCredentials: Boolean(
+        settings.tmdbApiKey.trim() || settings.tmdbReadToken.trim() || BUILTIN_TMDB.apiKey || BUILTIN_TMDB.readToken,
+      ),
       hasLlmCredentials: Boolean(settings.llmApiKey.trim() && settings.llmProvider),
       reducedMotion,
     }),

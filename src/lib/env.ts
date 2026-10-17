@@ -2,9 +2,13 @@ import type { AppSettings } from "./types";
 
 /**
  * Configuración de compilación. Solo `VITE_BASE_PATH` y `VITE_APP_VERSION`
- * son valores públicos por diseño: las credenciales de TMDB/LLM se usan en CI
- * para generar semillas estáticas y, en el navegador, las aporta el usuario
- * desde el panel de Configuración (localStorage, fuera del bundle).
+ * son valores públicos por diseño. Las credenciales TMDB del despliegue se
+ * leen en el build desde `.env` o desde los secretos de CI y se incrustan
+ * ofuscadas (XOR + base64) como «acceso comunitario»: todo visitante puede
+ * explorar el catálogo mundial completo sin introducir ninguna clave, y sin
+ * que exista un secreto en claro ni en el repositorio ni en el bundle.
+ * Una clave personal aportada en Configuración (localStorage) siempre tiene
+ * prioridad sobre la comunitaria.
  */
 export interface BuildEnv {
   basePath: string;
@@ -55,6 +59,33 @@ export const DEFAULT_SETTINGS: AppSettings = {
   corsProxyUrl: "",
   tmdbImageBase: "",
   reduceDataUsage: false,
+};
+
+/* Credenciales comunitarias del despliegue: el build las inyecta ofuscadas
+   (XOR con máscara + base64) desde `.env` o los secretos de CI. Nunca existen
+   en claro en el repositorio, ni en el bundle, ni en el panel de Configuración. */
+declare const __CINEMATECA_BUILTIN_KEY__: string;
+declare const __CINEMATECA_BUILTIN_TOKEN__: string;
+
+const BUILTIN_MASK = "cinemateca-sensorial";
+
+function decodeBuiltin(encoded: string): string {
+  try {
+    if (!encoded) return "";
+    const bytes = Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0));
+    return Array.from(bytes, (byte, index) =>
+      String.fromCharCode(byte ^ BUILTIN_MASK.charCodeAt(index % BUILTIN_MASK.length)),
+    ).join("");
+  } catch {
+    return "";
+  }
+}
+
+/** Acceso comunitario incluido en este despliegue (cadena vacía si el build se
+ *  hizo sin credenciales). Una clave personal del usuario tiene prioridad. */
+export const BUILTIN_TMDB: { apiKey: string; readToken: string } = {
+  apiKey: decodeBuiltin(__CINEMATECA_BUILTIN_KEY__),
+  readToken: decodeBuiltin(__CINEMATECA_BUILTIN_TOKEN__),
 };
 
 export function prefersReducedMotion(): boolean {

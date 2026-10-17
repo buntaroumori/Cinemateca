@@ -136,6 +136,20 @@ export function useFilmFeed(initial: FeedFilters, hasCredentials: boolean): Film
       try {
         let incoming: CatalogItem[] = [];
         let nextTotalPages = 1;
+        const fastHome = !active.mood && targetPage === 1 && !active.year && !active.decade;
+
+        // La semilla precargada aporta contenido instantáneo (0 ms) también en
+        // modo con credenciales: el descubrimiento en vivo la amplía después.
+        let seedBase: CatalogItem[] = [];
+        if (reset && !active.seedOnly) {
+          const seed = await loadSeedBundle();
+          const pool = active.mood
+            ? (seed.moods.find((entry) => entry.id === active.mood)?.items ?? [])
+            : fastHome
+              ? seed.trending
+              : [];
+          seedBase = pool.map((movie) => toCatalogItem(movie));
+        }
 
         if (reset && active.seedOnly) {
           const seed = await loadSeedBundle();
@@ -148,7 +162,7 @@ export function useFilmFeed(initial: FeedFilters, hasCredentials: boolean): Film
           // nacen claves React repetidas y nodos huérfanos en la rejilla.
           incoming = mergeUnique([], pool.map((movie) => toCatalogItem(movie)));
           nextTotalPages = 1;
-        } else if (!active.mood && targetPage === 1 && !active.year && !active.decade) {
+        } else if (fastHome) {
           const [trending, discover] = await Promise.all([
             getTrending(1).catch(() => [] as Awaited<ReturnType<typeof getTrending>>),
             discoverMovies({ sortBy: SORT_TO_TMDB[active.sort], page: 1 }).catch(() => null),
@@ -174,6 +188,7 @@ export function useFilmFeed(initial: FeedFilters, hasCredentials: boolean): Film
         }
 
         if (id !== requestId.current) return;
+        incoming = mergeUnique(seedBase, incoming);
 
         const merged = reset ? incoming : mergeUnique(itemsRef.current, incoming);
         setItems(sortByMode(merged, active.sort));
